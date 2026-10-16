@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 把指定图层设为锁屏壁纸（液态玻璃采样的就是这张系统壁纸） -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+
+    <!-- 读写 /sdcard/Download/gravitywall/（扫描海报包、应用内预览、写配置） -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <!-- 用于在应用内查询 LSPosed 管理器是否安装（诊断页展示用） -->
+    <queries>
+        <package android:name="org.lsposed.manager" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GravityWall">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- 允许 LSPosed 模块页直接跳转到本应用 -->
+            <intent-filter>
+                <action android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+        <!-- 注意：与框架通信的 XposedProvider 由 io.github.libxposed:service 的清单自动合并进来
+             （authorities = ${applicationId}.XposedService），这里不要再声明一次。 -->
+    </application>
+</manifest>
