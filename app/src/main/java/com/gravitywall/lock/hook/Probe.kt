@@ -667,6 +667,13 @@ internal class Probe(
     @Volatile private var fullScaleDeg = FULL_SCALE_DEG
     @Volatile private var smoothFactor = SMOOTH
 
+    /** 下拉栏/控制中心的面板视图（用来判断"是否展开"） */
+    @Volatile private var shadePanel: View? = null
+    @Volatile private var stagesHidden = false
+    @Volatile private var lockedCached = false
+    private var lockedCheckCounter = 0
+    private var lastPanelOpen = false
+
     /** 卸下所有注入的舞台视图，并把时钟位移归零（还原用）。 */
     private fun unmountStages() {
         val had = stageBehind != null || stageFront != null || stageTop != null
@@ -677,6 +684,8 @@ internal class Probe(
         stageFront = null
         stageTop = null
         stagesBuilt = false
+        stagesHidden = false
+        lastPanelOpen = false
         stagesCheckCounter = 0
         runCatching {
             cachedHourClock?.let { it.translationX = 0f; it.translationY = 0f }
@@ -834,6 +843,9 @@ internal class Probe(
         stageBehind = stageB
         stageFront = stageF
         stageTop = stageT
+        if (stagesHidden) {
+            for (st in listOf(stageB, stageF, stageT)) st.visibility = View.INVISIBLE
+        }
         stagesBuilt = true
         stagesCheckCounter = 0
         noInjection = false
@@ -844,6 +856,57 @@ internal class Probe(
         line("[舞台] 最顶层已挂载 ${topLayers.size} 层：${topLayers.joinToString { "${it.name}(±${"%.0f".format(it.maxX)}px)" }}（z=2.0，高于信息层）")
         return true
     }
+
+    /**
+     * 控制中心的背景会模糊"下拉栏窗口里的内容"，而已解锁时系统会把锁屏根视图重新设为可见
+     * （实测：桌面拉下面板后 HyperOSKeyguardRootView 从 alpha=0 变 alpha=1），
+     * 于是我们注入的图层会被控制中心一起采样到。这里用"面板展开 + 已解锁"两个条件判定：
+     * 满足时把自己的舞台隐藏，收起或回到锁屏时立刻恢复。
+     */
+    private fun syncStagesVisibility() {
+        val panel = shadePanel ?: findShadePanel()?.also { shadePanel = it } ?: return
+        val open = panel.alpha > 0.5f
+        if (open != lastPanelOpen) {
+            lastPanelOpen = open
+            lockedCached = isKeyguardLocked()
+            lockedCheckCounter = 0
+        } else if (open) {
+            if (++lockedCheckCounter >= 30) {
+                lockedCheckCounter = 0
+                lockedCached = isKeyguardLocked()
+            }
+        }
+        val hide = open && !lockedCached
+        if (hide == stagesHidden) return
+        stagesHidden = hide
+        val vis = if (hide) View.INVISIBLE else View.VISIBLE
+        for (stage in listOf(stageBehind, stageFront, stageTop)) stage?.visibility = vis
+        line(if (hide) "[控制中心] 面板展开且已解锁：暂时隐藏注入图层（避免被控制中心采样）"
+        else "[控制中心] 面板收起：恢复显示注入图层")
+    }
+
+    private fun isKeyguardLocked(): Boolean = runCatching {
+        val km = context?.getSystemService(android.content.Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        km?.isKeyguardLocked ?: false
+    }.getOrDefault(false)
+
+    /** 从锁屏根往上找 NotificationShadeWindowView，再在它里面找 NotificationPanelView。 */
+    private fun findShadePanel(): View? = runCatching {
+        val roots = rootViews() ?: return null
+        val keyguard = findKeyguardRoot(roots) ?: return null
+        var host: ViewGroup? = null
+        var p: android.view.ViewParent? = keyguard.parent
+        while (p != null) {
+            if (p is ViewGroup && p.javaClass.simpleName.contains("NotificationShade")) {
+                host = p
+                break
+            }
+            p = p.parent
+        }
+        val h = host ?: return null
+        (0 until h.childCount).map { h.getChildAt(it) }
+            .firstOrNull { it.javaClass.simpleName == "NotificationPanelView" }
+    }.getOrNull()
 
     /** 解析位移目标：先拿缓存，掉了再按 id 重新找。 */
     private fun parallaxTargets(): Pair<View?, View?> {
@@ -863,6 +926,7 @@ internal class Probe(
      * 阶段 3 会换成我们自己的图层舞台。
      */
     private fun applyParallax() {
+        syncStagesVisibility()
         val tilt = lastTilt ?: return
         val (hour, minute) = parallaxTargets()
 
