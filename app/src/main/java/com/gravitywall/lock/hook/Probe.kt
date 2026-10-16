@@ -676,7 +676,8 @@ internal class Probe(
     @Volatile private var stagesHidden = false
     @Volatile private var lockedCached = false
     /** 锁屏根视图（用它自己的 alpha 判断解锁动画是否结束） */
-    @Volatile private var keyguardRootRef: View? = null
+    /** 解锁后延迟多久隐藏图层（毫秒，应用设置里可调；每次重建舞台时重新读取） */
+    @Volatile private var unlockHideDelayMs = 400L
     /** 检测到"已解锁"的时刻（毫秒）；0 表示当前处于锁屏状态 */
     private var unlockedAt = 0L
     private var lockedCheckCounter = 0
@@ -722,7 +723,6 @@ internal class Probe(
 
         val roots = rootViews() ?: return false
         val keyguard = findKeyguardRoot(roots) ?: return false
-        keyguardRootRef = keyguard
         val hostBehind = findByIdIn(keyguard, "keyguard_background_layer") as? ViewGroup ?: return false
         val hostFront = findByIdIn(keyguard, "keyguard_foreground_layer") as? ViewGroup ?: return false
         val hostTop = findByIdIn(keyguard, "keyguard_panel_view") as? ViewGroup ?: return false
@@ -742,6 +742,7 @@ internal class Probe(
             CompositionLoader.setRuntimeJson(prefsProvider()?.getString(State.KEY_RUNTIME_CONFIG, null))
         }
         moveClock = runCatching { CompositionLoader.moveClock() }.getOrDefault(false)
+        unlockHideDelayMs = runCatching { CompositionLoader.unlockHideDelayMs() }.getOrDefault(400L)
         fullScaleDeg = runCatching { CompositionLoader.fullScaleDeg() }.getOrDefault(FULL_SCALE_DEG)
         smoothFactor = runCatching { CompositionLoader.smooth() }.getOrDefault(SMOOTH)
 
@@ -883,15 +884,11 @@ internal class Probe(
                 unlockedAt = if (locked) 0L else System.currentTimeMillis()
             }
         }
-        // 解锁后：隐藏发生在**解锁动画结束时**（锁屏根 alpha 归零，那时图层已随动画淡出、看不出跳变），
-        // 并且用 stagesHidden 做**锁存**——只要还处于解锁状态就一直保持隐藏。
-        // （曾经写成"每帧按 rootAlpha 重新判断"，结果系统在拉下面板时把根视图设为可见，
-        //   我们的图层又被"恢复显示"了，等于白改。）
-        val hide = !lockedCached && (
-            stagesHidden ||
-                rootAlpha() < 0.02f ||
-                (unlockedAt > 0L && System.currentTimeMillis() - unlockedAt > 1500L)
-            )
+        // 解锁后延迟 unlockHideDelayMs 隐藏，之后用 stagesHidden **锁存**——只要还处于解锁状态就一直保持隐藏。
+        // （关键：不能每帧按某个信号重新判断"要不要显示"，否则系统拉下面板时会把图层又恢复出来。）
+        val hide = !lockedCached &&
+            (stagesHidden ||
+                (unlockedAt > 0L && System.currentTimeMillis() - unlockedAt > unlockHideDelayMs))
         if (hide == stagesHidden) return
         stagesHidden = hide
         val vis = if (hide) View.INVISIBLE else View.VISIBLE
@@ -903,16 +900,6 @@ internal class Probe(
                 "[可见性] 回到锁屏：恢复显示注入图层"
             },
         )
-    }
-
-    /** 锁屏根视图当前的 alpha（用来判断解锁动画是否结束）。 */
-    private fun rootAlpha(): Float {
-        val root = keyguardRootRef ?: run {
-            val r = runCatching { rootViews()?.let { findKeyguardRoot(it) } }.getOrNull()
-            if (r != null) keyguardRootRef = r
-            r
-        }
-        return root?.alpha ?: 1f
     }
 
     private fun isKeyguardLocked(): Boolean = runCatching {

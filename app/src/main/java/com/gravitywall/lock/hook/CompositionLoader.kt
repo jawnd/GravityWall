@@ -85,6 +85,10 @@ internal object CompositionLoader {
     /** 平滑系数：每帧向目标位移逼近的比例（0.02~1；越大越跟手，越小越柔和）。 */
     fun smooth(): Float = configValue("smooth")?.toFloatOrNull()?.coerceIn(0.02f, 1f) ?: 0.25f
 
+    /** 解锁后多久隐藏注入图层（毫秒，默认 400；100~3000）。 */
+    fun unlockHideDelayMs(): Long =
+        configValue("unlockHideDelayMs")?.toLongOrNull()?.coerceIn(100L, 3000L) ?: 400L
+
     /**
      * 是否让系统时钟跟随倾斜位移。
      * 默认 **关闭**：时钟由系统控制（方案 Q13），只有调试时才打开。

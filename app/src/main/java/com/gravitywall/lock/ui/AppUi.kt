@@ -685,6 +685,24 @@ private fun SettingsTab(ctrl: AppController) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        // 解锁后隐藏图层的延迟
+        Text(
+            "解锁后隐藏图层：${cfg.unlockHideDelayMs} ms",
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Slider(
+            value = cfg.unlockHideDelayMs.toFloat(),
+            onValueChange = { ctrl.update(cfg.copy(unlockHideDelayMs = it.toInt())) },
+            valueRange = 100f..1500f,
+        )
+        Text(
+            "解锁后过这么久，就把注入的图层藏起来（桌面与控制中心采样不到它们）。" +
+                "调太小：图层可能在解锁动画中途消失；调太大：解锁后马上拉控制中心可能会闪一下。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
         Row(Modifier.padding(vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { ctrl.applyToLockScreen() }) { Text("应用设置") }
         }

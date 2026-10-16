@@ -28,6 +28,8 @@ internal data class RuntimeConfig(
     val fullScaleDeg: Float = 10f,
     /** 平滑系数：每帧向目标位移逼近的比例（0.02~1；越大越跟手） */
     val smooth: Float = 0.25f,
+    /** 解锁后多久隐藏注入图层（毫秒）：太短会在解锁动画中途"跳掉"，太长则解锁后立刻下拉控制中心可能闪一下 */
+    val unlockHideDelayMs: Int = 400,
 ) {
     fun toJson(): String = JSONObject().apply {
         pack?.let { put("pack", it) }
@@ -40,6 +42,7 @@ internal data class RuntimeConfig(
         put("glassLayer", glassLayer)
         put("fullScaleDeg", fullScaleDeg.toDouble())
         put("smooth", smooth.toDouble())
+        put("unlockHideDelayMs", unlockHideDelayMs)
     }.toString()
 }
 
@@ -117,6 +120,7 @@ internal object PackStore {
             project = o.optString("project").takeIf { it.isNotEmpty() },
             fullScaleDeg = o.optDouble("fullScaleDeg", 10.0).toFloat(),
             smooth = o.optDouble("smooth", 0.25).toFloat(),
+            unlockHideDelayMs = o.optInt("unlockHideDelayMs", 400),
         )
     }.getOrNull()
 
