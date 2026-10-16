@@ -77,7 +77,9 @@ internal object PackStore {
 
     /** 扫描共享目录里的海报包。 */
     fun packs(): List<PackEntry> {
-        val files = DIR.listFiles { f -> f.isFile && f.name.lowercase().endsWith(".tendies") } ?: return emptyList()
+        val files = DIR.listFiles { f ->
+            f.isFile && (f.name.lowercase().endsWith(".tendies") || f.name.lowercase().endsWith(".gwp"))
+        } ?: return emptyList()
         return files.sortedBy { it.name }.map { PackEntry(it.name, it.absolutePath, it.length() / 1024) }
     }
 

@@ -11,6 +11,10 @@ import androidx.compose.material3.Tab
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -470,9 +474,13 @@ private fun ProjectsTab(ctrl: AppController) {
     }
 }
 
-/** 项目标签页：点一行即打开。 */
+/** 项目标签页：点一行即打开，长按出菜单（重命名 / 删除）。 */
 @Composable
 private fun ProjectList(ctrl: AppController) {
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    var renameFor by remember { mutableStateOf<String?>(null) }
+    var deleteFor by remember { mutableStateOf<String?>(null) }
+
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         if (ctrl.projectNames.isEmpty()) {
             Text(
@@ -487,7 +495,10 @@ private fun ProjectList(ctrl: AppController) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp)
-                    .clickable { ctrl.openProject(name) },
+                    .combinedClickable(
+                        onClick = { ctrl.openProject(name) },
+                        onLongClick = { menuFor = name },
+                    ),
                 colors = if (current) {
                     androidx.compose.material3.CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -512,10 +523,79 @@ private fun ProjectList(ctrl: AppController) {
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
+                DropdownMenu(expanded = menuFor == name, onDismissRequest = { menuFor = null }) {
+                    DropdownMenuItem(
+                        text = { Text("重命名", fontSize = 13.sp) },
+                        onClick = {
+                            menuFor = null
+                            renameFor = name
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("删除", fontSize = 13.sp) },
+                        onClick = {
+                            menuFor = null
+                            deleteFor = name
+                        },
+                    )
+                }
             }
         }
         Box(Modifier.height(80.dp))
     }
+
+    renameFor?.let { name ->
+        ProjectNameDialog(
+            title = "重命名项目",
+            initial = name,
+            onDismiss = { renameFor = null },
+            onConfirm = { v ->
+                ctrl.renameProjectByName(name, v)
+                renameFor = null
+            },
+        )
+    }
+    deleteFor?.let { name ->
+        AlertDialog(
+            onDismissRequest = { deleteFor = null },
+            title = { Text("删除项目") },
+            text = { Text("确定删除「$name」吗？目录会一起删掉，无法撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    ctrl.deleteProject(name)
+                    deleteFor = null
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { deleteFor = null }) { Text("取消") } },
+        )
+    }
+}
+
+/** 项目改名对话框。 */
+@Composable
+private fun ProjectNameDialog(
+    title: String,
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                label = { Text("项目名") },
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }, enabled = text.trim().isNotEmpty()) { Text("改名") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 /** 海报包标签页：点「导入为项目」即可编辑。 */
@@ -543,7 +623,13 @@ private fun PackList(ctrl: AppController) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    TextButton(onClick = { ctrl.importPackAsProject(pack) }) { Text("导入为项目", fontSize = 12.sp) }
+                    TextButton(onClick = {
+                        if (pack.name.lowercase().endsWith(".gwp")) {
+                            ctrl.importProjectArchive(java.io.File(pack.path))
+                        } else {
+                            ctrl.importPackAsProject(pack)
+                        }
+                    }) { Text("导入为项目", fontSize = 12.sp) }
                 }
             }
         }

@@ -626,25 +626,133 @@ internal class AppController(private val context: Context) {
         }.start()
     }
 
+    /** 改名当前项目（编辑器「全局参数」里用）。 */
     fun renameProject(newName: String) {
         val p = project ?: return
-        val clean = newName.trim().ifEmpty { return }
-        if (clean == p.name) return
+        renameProjectByName(p.name, newName)
+    }
+
+    /** 按名字改名项目（列表里长按重命名用，不要求它当前打开着）。 */
+    fun renameProjectByName(oldName: String, newName: String) {
+        val clean = newName.trim()
+        if (clean.isEmpty() || clean == oldName) return
         if (Project.list().contains(clean)) {
             status = "已有同名项目：$clean"
             return
         }
-        val oldDir = Project.projectDir(p.name)
+        val oldDir = Project.projectDir(oldName)
         val newDir = Project.projectDir(clean)
         if (oldDir.isDirectory && !oldDir.renameTo(newDir)) {
             status = "改名失败（项目目录被占用）"
             return
         }
-        p.name = clean
+        if (project?.name == oldName) {
+            project?.name = clean
+            project?.let { Project.save(it) }
+        }
+        // 正被应用到锁屏的话，配置里的路径要同步，否则模块加载不到
+        val applied = config.project?.contains("/$oldName/") == true
+        if (applied) {
+            config = config.copy(project = config.project!!.replace("/$oldName/", "/$clean/"))
+            applyProject()
+        }
         revision++
-        Project.save(p)
+        Project.clearBitmapCache()
         projectNames = Project.list()
-        status = "项目已改名为「$clean」"
+        status = "项目已改名为「$clean」" + if (applied) "（锁屏已同步）" else ""
+    }
+
+    /** 删除项目（连目录一起）。它是当前打开的、或正被应用的话，一并清干净。 */
+    fun deleteProject(name: String) {
+        val wasOpen = project?.name == name
+        val wasApplied = config.project?.contains("/$name/") == true
+        val dir = Project.projectDir(name)
+        runCatching { dir.deleteRecursively() }.getOrDefault(false)
+        if (dir.exists()) {
+            status = "删除失败：$name（目录被占用？）"
+            return
+        }
+        if (wasOpen) {
+            Project.clearBitmapCache()
+            project = null
+            selectedLayerId = null
+            summary = null
+        }
+        if (wasApplied) {
+            config = config.copy(project = null)
+            applyProject()
+        }
+        projectNames = Project.list()
+        status = "已删除项目「$name」" + if (wasApplied) "（锁屏上的作品也已撤下）" else ""
+    }
+
+    /**
+     * 导出"作品包"（后缀 .gwp，本质就是一个 zip：project.json + images/）。
+     * 比海报包轻——不追求 iOS 兼容，只用来在自己设备/备份之间搬运作品。
+     */
+    fun exportProjectArchive() {
+        val p = project ?: return
+        flushSave()
+        status = "正在导出作品包 …"
+        Thread {
+            val out = java.io.File(PackStore.DIR, "${p.name}.gwp")
+            val ok = runCatching {
+                java.util.zip.ZipOutputStream(out.outputStream().buffered()).use { zip ->
+                    zip.putNextEntry(java.util.zip.ZipEntry("project.json"))
+                    zip.write(p.toJson().toByteArray(Charsets.UTF_8))
+                    zip.closeEntry()
+                    Project.imagesDir(p.name).listFiles()?.forEach { f ->
+                        if (f.isFile) {
+                            zip.putNextEntry(java.util.zip.ZipEntry("images/${f.name}"))
+                            f.inputStream().use { it.copyTo(zip) }
+                            zip.closeEntry()
+                        }
+                    }
+                }
+                out.isFile && out.length() > 0
+            }.getOrDefault(false)
+            post {
+                status = if (ok) "已导出作品包：${out.name}（在「海报包」页可再次导入）" else "导出作品包失败"
+                scan()
+            }
+        }.start()
+    }
+
+    /** 把 .gwp 作品包导入成新项目（重名自动加序号）。 */
+    fun importProjectArchive(file: java.io.File) {
+        status = "正在导入作品包 ${file.name} …"
+        Thread {
+            val result = runCatching {
+                java.util.zip.ZipFile(file).use { zip ->
+                    val entry = zip.getEntry("project.json") ?: return@use null
+                    val json = zip.getInputStream(entry).bufferedReader().readText()
+                    val p = Project.fromJson(json) ?: return@use null
+                    val baseName = p.name.ifEmpty { file.nameWithoutExtension }
+                    var target = baseName
+                    var n = 2
+                    while (Project.list().contains(target)) target = "$baseName(${n++})"
+                    Project.imagesDir(target).mkdirs()
+                    zip.entries().toList()
+                        .filter { it.name.startsWith("images/") && !it.isDirectory }
+                        .forEach { e ->
+                            val f = java.io.File(Project.imagesDir(target), e.name.substringAfterLast('/'))
+                            zip.getInputStream(e).use { input -> f.outputStream().use { input.copyTo(it) } }
+                        }
+                    p.name = target
+                    Project.save(p)
+                    target
+                }
+            }.getOrNull()
+            post {
+                projectNames = Project.list()
+                if (result != null) {
+                    openProject(result)
+                    status = "已导入作品包：$result"
+                } else {
+                    status = "导入作品包失败：${file.name}"
+                }
+            }
+        }.start()
     }
 
     fun saveAs(newName: String) {

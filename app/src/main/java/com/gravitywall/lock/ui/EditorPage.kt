@@ -322,8 +322,12 @@ internal fun EditorTab(ctrl: AppController) {
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("导出海报包", fontSize = 13.sp) },
+                        text = { Text("导出海报包（iOS 兼容 .tendies）", fontSize = 13.sp) },
                         onClick = { saveMenu = false; ctrl.exportProject(apply = false) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出作品包（.gwp，本机搬运/备份）", fontSize = 13.sp) },
+                        onClick = { saveMenu = false; ctrl.exportProjectArchive() },
                     )
                     DropdownMenuItem(
                         text = { Text("应用到锁屏", fontSize = 13.sp) },
