@@ -1254,6 +1254,9 @@ private fun GlobalsSheet(
     onSaveAs: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 项目对象是就地改的（setBaseLayer / setDefaultBand 只改字段），Compose 看不出变化；
+    // 读一下 revision（每次改动 +1）才会让面板跟着重组、chip 重新求值选中态
+    ctrl.revision
     var name by remember(project.name) { mutableStateOf(project.name) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
