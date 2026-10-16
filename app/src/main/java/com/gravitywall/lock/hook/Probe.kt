@@ -865,7 +865,8 @@ internal class Probe(
      */
     private fun syncStagesVisibility() {
         val panel = shadePanel ?: findShadePanel()?.also { shadePanel = it } ?: return
-        val open = panel.alpha > 0.5f
+        // 阈值要贴近 0：面板一开始展开系统就把锁屏根设为可见，等到 0.5 再隐藏会闪一下壁纸
+        val open = panel.alpha > 0.02f
         if (open != lastPanelOpen) {
             lastPanelOpen = open
             lockedCached = isKeyguardLocked()
