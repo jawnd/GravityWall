@@ -450,7 +450,7 @@ private fun ProjectsTab(ctrl: AppController) {
         }
 
         TabRow(selectedTabIndex = tab) {
-            listOf("项目", "海报包").forEachIndexed { i, label ->
+            listOf("项目", "海报包 / 作品包").forEachIndexed { i, label ->
                 Tab(
                     selected = tab == i,
                     onClick = { tab = i; ctrl.scan() },
@@ -464,7 +464,7 @@ private fun ProjectsTab(ctrl: AppController) {
                 Column(Modifier.padding(12.dp)) {
                     Text("需要「全部文件访问」权限", fontWeight = FontWeight.Medium)
                     Text(
-                        "项目和海报包都在 /sdcard/Download/gravitywall/，需要该权限才能读取。",
+                        "项目在 /sdcard/Download/gravitywall/projects/，海报包与作品包在 /sdcard/Download/gravitywall/packs/，需要该权限才能读写。",
                         fontSize = 12.sp,
                     )
                     Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -630,11 +630,17 @@ private fun ProjectNameDialog(
 @Composable
 private fun PackList(ctrl: AppController) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        Text(
+            "专用目录：/sdcard/Download/gravitywall/packs/（导出的海报包 / 作品包都放这里）",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 12.dp),
+        )
         if (ctrl.packs.isEmpty()) {
             Text(
-                "（这个目录里还没有 .tendies 海报包）",
+                "（这里还没有包：用编辑器「保存 ▾」导出，或把 .tendies / .gwp 拷进这个目录）",
                 fontSize = 12.sp,
-                modifier = Modifier.padding(top = 12.dp),
+                modifier = Modifier.padding(top = 6.dp),
             )
         }
         ctrl.packs.forEach { pack ->

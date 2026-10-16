@@ -151,9 +151,11 @@ internal class AppController(private val context: Context) {
             status = "需要「全部文件访问」权限才能读取海报包"
             return
         }
+        val moved = PackStore.migrateLegacyPacks()
         packs = PackStore.packs()
         projectNames = Project.list()
-        status = "扫描到 ${packs.size} 个海报包、${projectNames.size} 个项目"
+        val tail = if (moved > 0) "（已把 $moved 个包移入 packs/）" else ""
+        status = "扫描到 ${packs.size} 个海报包 / 作品包、${projectNames.size} 个项目$tail"
         if (selected == null) {
             PackStore.readConfigFile()?.pack?.let { path ->
                 selected = packs.firstOrNull { it.path == path }
@@ -695,7 +697,8 @@ internal class AppController(private val context: Context) {
         flushSave()
         status = "正在导出作品包 …"
         Thread {
-            val out = java.io.File(PackStore.DIR, "${p.name}.gwp")
+            PackStore.PACK_DIR.mkdirs()
+            val out = java.io.File(PackStore.PACK_DIR, "${p.name}.gwp")
             val ok = runCatching {
                 java.util.zip.ZipOutputStream(out.outputStream().buffered()).use { zip ->
                     zip.putNextEntry(java.util.zip.ZipEntry("project.json"))
@@ -895,7 +898,8 @@ internal class AppController(private val context: Context) {
         flushSave()
         status = "正在导出海报包 …"
         Thread {
-            val out = java.io.File(PackStore.DIR, "${p.name}.tendies")
+            PackStore.PACK_DIR.mkdirs()
+            val out = java.io.File(PackStore.PACK_DIR, "${p.name}.tendies")
             val r = runCatching {
                 com.gravitywall.lock.export.PackWriter.write(
                     out, p, screenW(), screenH(), config.amplitude * screenW(),

@@ -67,7 +67,14 @@ internal data class ImportSummary(
 internal object PackStore {
 
     val DIR: File get() = File(Environment.getExternalStorageDirectory(), "Download/gravitywall")
+
+    /** 海报包 / 作品包专用目录：`/sdcard/Download/gravitywall/packs/`（列表页只扫这里，导出也只写这里）。 */
+    val PACK_DIR: File get() = File(DIR, "packs")
+
     const val CONFIG_NAME = "config.json"
+
+    private fun isPack(f: File): Boolean =
+        f.isFile && (f.name.lowercase().endsWith(".tendies") || f.name.lowercase().endsWith(".gwp"))
 
     fun hasStorageAccess(): Boolean = runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
 
@@ -75,11 +82,23 @@ internal object PackStore {
         Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
             .setData(android.net.Uri.parse("package:${context.packageName}"))
 
-    /** 扫描共享目录里的海报包。 */
+    /**
+     * 把早期直接丢在 `gravitywall/` 根下的包挪进 `packs/`（只动这两种后缀，其它文件一律不碰）。
+     * 目标同名已存在时保留原文件，不覆盖。返回挪动的个数。
+     */
+    fun migrateLegacyPacks(): Int {
+        val legacy = (DIR.listFiles { f -> isPack(f) }) ?: return 0
+        if (legacy.isEmpty()) return 0
+        PACK_DIR.mkdirs()
+        return legacy.count { f ->
+            val target = File(PACK_DIR, f.name)
+            !target.exists() && f.renameTo(target)
+        }
+    }
+
+    /** 扫描专用目录里的海报包 / 作品包。 */
     fun packs(): List<PackEntry> {
-        val files = DIR.listFiles { f ->
-            f.isFile && (f.name.lowercase().endsWith(".tendies") || f.name.lowercase().endsWith(".gwp"))
-        } ?: return emptyList()
+        val files = PACK_DIR.listFiles { f -> isPack(f) } ?: return emptyList()
         return files.sortedBy { it.name }.map { PackEntry(it.name, it.absolutePath, it.length() / 1024) }
     }
 
