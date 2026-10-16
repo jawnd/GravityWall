@@ -143,6 +143,8 @@ internal fun StagePreview(
             ?: sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
             ?: sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
             ?: sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        var lastNx = Float.NaN
+        var lastNy = Float.NaN
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 val tilt = when (event.sensor.type) {
@@ -151,7 +153,13 @@ internal fun StagePreview(
                     else -> TiltMath.fromGravity(event.values[0], event.values[1], event.values[2])
                 } ?: return
                 val (nx, ny) = ParallaxDefaults.normalize(tilt[0], tilt[1])
-                stage.applyTilt(nx, ny)
+                // 平放时传感器仍有微小读数抖动；量化后相同就不重画
+                val qx = (nx * 200).toInt().toFloat() / 200f
+                val qy = (ny * 200).toInt().toFloat() / 200f
+                if (qx == lastNx && qy == lastNy) return
+                lastNx = qx
+                lastNy = qy
+                stage.applyTilt(qx, qy)
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

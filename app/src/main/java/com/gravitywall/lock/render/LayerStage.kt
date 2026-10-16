@@ -185,8 +185,9 @@ internal class LayerStage(context: Context) : View(context) {
         invalidate()
     }
 
-    /** 施加归一化倾斜（−1~1）。 */
+    /** 施加归一化倾斜（−1~1）；值没变就不重画（传感器静置时也会以固定频率回调）。 */
     fun applyTilt(x: Float, y: Float) {
+        if (x == normX && y == normY) return
         normX = x
         normY = y
         invalidate()
