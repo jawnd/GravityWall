@@ -347,8 +347,12 @@ internal class Probe(
                                 line("[壁纸] 还没有 Context")
                                 return@runCatching
                             }
-                            // 覆盖前先尽力备份当前锁屏壁纸（能读到就备份）
+                            // 只在"还没有备份"时备份当前锁屏壁纸（否则第二次写就把自己写的图备份进去了）
                             runCatching {
+                                if (java.io.File(BACKUP_DIR, "wallpaper_backup.png").isFile) {
+                                    line("[壁纸] 已有备份，跳过备份步骤")
+                                    return@runCatching
+                                }
                                 val wm0 = android.app.WallpaperManager.getInstance(ctx)
                                 val cur = wm0.getDrawable(android.app.WallpaperManager.FLAG_LOCK)
                                 val bmp = (cur as? android.graphics.drawable.BitmapDrawable)?.bitmap
@@ -385,19 +389,21 @@ internal class Probe(
                             }
                             CompositionLoader.setRuntimeJson("{}")
                             unmountStages()
-                            val backup = java.io.File(BACKUP_DIR, "wallpaper_backup.png")
-                            if (backup.isFile) {
-                                val bmp = android.graphics.BitmapFactory.decodeFile(backup.absolutePath)
-                                val ctx = context
-                                if (bmp != null && ctx != null) {
-                                    runCatching {
-                                        android.app.WallpaperManager.getInstance(ctx)
-                                            .setBitmap(bmp, null, true, android.app.WallpaperManager.FLAG_LOCK)
-                                        line("[还原] 已把锁屏壁纸还原为备份（$BACKUP_DIR/wallpaper_backup.png）")
+                            // 把锁屏壁纸恢复成"与桌面一致"——最接近系统默认的状态，
+                            // 控制中心的背景（跟随锁屏壁纸）随之恢复正常。
+                            val ctx0 = context
+                            if (ctx0 != null) {
+                                runCatching {
+                                    val wm = android.app.WallpaperManager.getInstance(ctx0)
+                                    val cur = wm.getDrawable(android.app.WallpaperManager.FLAG_SYSTEM)
+                                    val bmp = (cur as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                                    if (bmp != null) {
+                                        wm.setBitmap(bmp, null, true, android.app.WallpaperManager.FLAG_LOCK)
+                                        line("[还原] 锁屏壁纸已恢复为与桌面一致（控制中心背景随之恢复正常）")
+                                    } else {
+                                        line("[还原] 读不到桌面壁纸，锁屏壁纸需要你手动重设一张")
                                     }
                                 }
-                            } else {
-                                line("[还原] 没有壁纸备份可还原（锁屏壁纸需要你手动重设）")
                             }
                             publish(true)
                         }
@@ -669,6 +675,8 @@ internal class Probe(
 
     @Volatile private var stagesHidden = false
     @Volatile private var lockedCached = false
+    /** 锁屏根视图（用它自己的 alpha 判断解锁动画是否结束） */
+    @Volatile private var keyguardRootRef: View? = null
     /** 检测到"已解锁"的时刻（毫秒）；0 表示当前处于锁屏状态 */
     private var unlockedAt = 0L
     private var lockedCheckCounter = 0
@@ -714,6 +722,7 @@ internal class Probe(
 
         val roots = rootViews() ?: return false
         val keyguard = findKeyguardRoot(roots) ?: return false
+        keyguardRootRef = keyguard
         val hostBehind = findByIdIn(keyguard, "keyguard_background_layer") as? ViewGroup ?: return false
         val hostFront = findByIdIn(keyguard, "keyguard_foreground_layer") as? ViewGroup ?: return false
         val hostTop = findByIdIn(keyguard, "keyguard_panel_view") as? ViewGroup ?: return false
@@ -874,8 +883,15 @@ internal class Probe(
                 unlockedAt = if (locked) 0L else System.currentTimeMillis()
             }
         }
-        val hide = !lockedCached && unlockedAt > 0L &&
-            System.currentTimeMillis() - unlockedAt > UNLOCK_HIDE_DELAY_MS
+        // 解锁后：隐藏发生在**解锁动画结束时**（锁屏根 alpha 归零，那时图层已随动画淡出、看不出跳变），
+        // 并且用 stagesHidden 做**锁存**——只要还处于解锁状态就一直保持隐藏。
+        // （曾经写成"每帧按 rootAlpha 重新判断"，结果系统在拉下面板时把根视图设为可见，
+        //   我们的图层又被"恢复显示"了，等于白改。）
+        val hide = !lockedCached && (
+            stagesHidden ||
+                rootAlpha() < 0.02f ||
+                (unlockedAt > 0L && System.currentTimeMillis() - unlockedAt > 1500L)
+            )
         if (hide == stagesHidden) return
         stagesHidden = hide
         val vis = if (hide) View.INVISIBLE else View.VISIBLE
@@ -887,6 +903,16 @@ internal class Probe(
                 "[可见性] 回到锁屏：恢复显示注入图层"
             },
         )
+    }
+
+    /** 锁屏根视图当前的 alpha（用来判断解锁动画是否结束）。 */
+    private fun rootAlpha(): Float {
+        val root = keyguardRootRef ?: run {
+            val r = runCatching { rootViews()?.let { findKeyguardRoot(it) } }.getOrNull()
+            if (r != null) keyguardRootRef = r
+            r
+        }
+        return root?.alpha ?: 1f
     }
 
     private fun isKeyguardLocked(): Boolean = runCatching {
@@ -1078,9 +1104,6 @@ internal class Probe(
 
         // ---- 视差参数（先用常量；阶段 4 接到应用里的可调配置） ----
         /** 满量程角度：倾斜到该角度时达到最大位移 */
-        /** 解锁后多久才隐藏注入图层（毫秒）：留出解锁动画的时间 */
-        const val UNLOCK_HIDE_DELAY_MS = 600L
-
         const val FULL_SCALE_DEG = 10f
         /** 系数 1.0 时的最大位移（像素）。当前为**测试值**，便于肉眼验收；最终默认值约 32px（屏宽 3%） */
         const val AMPLITUDE_PX = 96f
