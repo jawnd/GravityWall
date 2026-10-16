@@ -667,12 +667,11 @@ internal class Probe(
     @Volatile private var fullScaleDeg = FULL_SCALE_DEG
     @Volatile private var smoothFactor = SMOOTH
 
-    /** 下拉栏/控制中心的面板视图（用来判断"是否展开"） */
-    @Volatile private var shadePanel: View? = null
     @Volatile private var stagesHidden = false
     @Volatile private var lockedCached = false
+    /** 检测到"已解锁"的时刻（毫秒）；0 表示当前处于锁屏状态 */
+    private var unlockedAt = 0L
     private var lockedCheckCounter = 0
-    private var lastPanelOpen = false
 
     /** 卸下所有注入的舞台视图，并把时钟位移归零（还原用）。 */
     private fun unmountStages() {
@@ -685,7 +684,6 @@ internal class Probe(
         stageTop = null
         stagesBuilt = false
         stagesHidden = false
-        lastPanelOpen = false
         stagesCheckCounter = 0
         runCatching {
             cachedHourClock?.let { it.translationX = 0f; it.translationY = 0f }
@@ -858,56 +856,43 @@ internal class Probe(
     }
 
     /**
-     * 控制中心的背景会模糊"下拉栏窗口里的内容"，而已解锁时系统会把锁屏根视图重新设为可见
-     * （实测：桌面拉下面板后 HyperOSKeyguardRootView 从 alpha=0 变 alpha=1），
-     * 于是我们注入的图层会被控制中心一起采样到。这里用"面板展开 + 已解锁"两个条件判定：
-     * 满足时把自己的舞台隐藏，收起或回到锁屏时立刻恢复。
+     * 已解锁时把注入图层藏起来。
+     *
+     * 为什么不再"监测面板展开再隐藏"：桌面拉下控制中心的**那一瞬间**，系统会先把锁屏根视图
+     * 从 alpha=0 设为 alpha=1，我们再隐藏总是慢一两帧，于是会闪一下锁屏壁纸。
+     * 改成"解锁后就一直隐藏"：这段时间锁屏本来就不显示，藏起来没有任何代价，
+     * 而控制中心/桌面无论何时都采样不到我们；锁屏出现时立刻恢复显示。
+     * 解锁后延迟 UNLOCK_HIDE_DELAY_MS 毫秒再隐藏，避开解锁动画（否则图层会从动画里"跳掉"）。
      */
     private fun syncStagesVisibility() {
-        val panel = shadePanel ?: findShadePanel()?.also { shadePanel = it } ?: return
-        // 阈值要贴近 0：面板一开始展开系统就把锁屏根设为可见，等到 0.5 再隐藏会闪一下壁纸
-        val open = panel.alpha > 0.02f
-        if (open != lastPanelOpen) {
-            lastPanelOpen = open
-            lockedCached = isKeyguardLocked()
+        // isKeyguardLocked 是 binder 调用，按回调次数节流（约 200ms 一次）
+        if (++lockedCheckCounter >= 10) {
             lockedCheckCounter = 0
-        } else if (open) {
-            if (++lockedCheckCounter >= 30) {
-                lockedCheckCounter = 0
-                lockedCached = isKeyguardLocked()
+            val locked = isKeyguardLocked()
+            if (locked != lockedCached) {
+                lockedCached = locked
+                unlockedAt = if (locked) 0L else System.currentTimeMillis()
             }
         }
-        val hide = open && !lockedCached
+        val hide = !lockedCached && unlockedAt > 0L &&
+            System.currentTimeMillis() - unlockedAt > UNLOCK_HIDE_DELAY_MS
         if (hide == stagesHidden) return
         stagesHidden = hide
         val vis = if (hide) View.INVISIBLE else View.VISIBLE
         for (stage in listOf(stageBehind, stageFront, stageTop)) stage?.visibility = vis
-        line(if (hide) "[控制中心] 面板展开且已解锁：暂时隐藏注入图层（避免被控制中心采样）"
-        else "[控制中心] 面板收起：恢复显示注入图层")
+        line(
+            if (hide) {
+                "[可见性] 已解锁：隐藏注入图层（桌面/控制中心都看不到，锁屏时自动恢复）"
+            } else {
+                "[可见性] 回到锁屏：恢复显示注入图层"
+            },
+        )
     }
 
     private fun isKeyguardLocked(): Boolean = runCatching {
         val km = context?.getSystemService(android.content.Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
         km?.isKeyguardLocked ?: false
     }.getOrDefault(false)
-
-    /** 从锁屏根往上找 NotificationShadeWindowView，再在它里面找 NotificationPanelView。 */
-    private fun findShadePanel(): View? = runCatching {
-        val roots = rootViews() ?: return null
-        val keyguard = findKeyguardRoot(roots) ?: return null
-        var host: ViewGroup? = null
-        var p: android.view.ViewParent? = keyguard.parent
-        while (p != null) {
-            if (p is ViewGroup && p.javaClass.simpleName.contains("NotificationShade")) {
-                host = p
-                break
-            }
-            p = p.parent
-        }
-        val h = host ?: return null
-        (0 until h.childCount).map { h.getChildAt(it) }
-            .firstOrNull { it.javaClass.simpleName == "NotificationPanelView" }
-    }.getOrNull()
 
     /** 解析位移目标：先拿缓存，掉了再按 id 重新找。 */
     private fun parallaxTargets(): Pair<View?, View?> {
@@ -1093,6 +1078,9 @@ internal class Probe(
 
         // ---- 视差参数（先用常量；阶段 4 接到应用里的可调配置） ----
         /** 满量程角度：倾斜到该角度时达到最大位移 */
+        /** 解锁后多久才隐藏注入图层（毫秒）：留出解锁动画的时间 */
+        const val UNLOCK_HIDE_DELAY_MS = 600L
+
         const val FULL_SCALE_DEG = 10f
         /** 系数 1.0 时的最大位移（像素）。当前为**测试值**，便于肉眼验收；最终默认值约 32px（屏宽 3%） */
         const val AMPLITUDE_PX = 96f
