@@ -718,6 +718,46 @@ internal class AppController(private val context: Context) {
         }.start()
     }
 
+    /**
+     * 从"文件管理器"选来的文件导入：先拷到缓存里的临时文件（名字用原文件名），
+     * 再按扩展名分派——`.tendies` 走海报包导入器，其余（`.gwp`）走作品包导入器。
+     */
+    fun importFromUri(uri: android.net.Uri) {
+        status = "正在导入 …"
+        Thread {
+            val display = queryDisplayName(uri) ?: "import_${System.currentTimeMillis()}"
+            val safeName = display.replace(Regex("[^\\w\\u4e00-\\u9fa5.()\\- ]"), "_").take(60)
+            val dir = java.io.File(context.cacheDir, "import").apply { mkdirs() }
+            // 上一次导入的临时文件（导入器是异步读的，这里只清旧的）
+            dir.listFiles()?.filter { it.lastModified() < System.currentTimeMillis() - 3_600_000L }?.forEach { it.delete() }
+            val tmp = java.io.File(dir, safeName)
+            val ok = runCatching {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    tmp.outputStream().use { input.copyTo(it) }
+                }
+                tmp.isFile && tmp.length() > 0
+            }.getOrDefault(false)
+            if (!ok) {
+                post { status = "导入失败：读不到所选文件" }
+                return@Thread
+            }
+            if (tmp.name.lowercase().endsWith(".tendies")) {
+                importPackAsProject(
+                    PackEntry(tmp.name, tmp.absolutePath, tmp.length() / 1024),
+                )
+            } else {
+                importProjectArchive(tmp)
+            }
+        }.start()
+    }
+
+    private fun queryDisplayName(uri: android.net.Uri): String? = runCatching {
+        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+        }
+    }.getOrNull()
+
     /** 把 .gwp 作品包导入成新项目（重名自动加序号）。 */
     fun importProjectArchive(file: java.io.File) {
         status = "正在导入作品包 ${file.name} …"

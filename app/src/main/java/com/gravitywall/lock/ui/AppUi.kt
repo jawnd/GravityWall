@@ -5,6 +5,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Tab
@@ -407,18 +409,44 @@ internal fun bandLabel(band: String) = when (band) {
 private fun ProjectsTab(ctrl: AppController) {
     val context = LocalContext.current
     var tab by remember { mutableStateOf(0) } // 0=项目 1=海报包
+    var plusMenu by remember { mutableStateOf(false) }
+    // 导入：拉起系统文件管理器（文档选择器），选到的文件拷进缓存再按类型导入
+    val pickImport = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            ctrl.importFromUri(uri)
+            tab = 0
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 顶栏：标题 + 右上角"新建空白项目"
+        // 顶栏：标题 + 右上角 ＋（新建 / 导入）
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("项目", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            TextButton(onClick = {
-                ctrl.newBlankProject()
-                tab = 0
-            }) { Text("＋", fontSize = 22.sp) }
+            Box {
+                TextButton(onClick = { plusMenu = true }) { Text("＋", fontSize = 22.sp) }
+                DropdownMenu(expanded = plusMenu, onDismissRequest = { plusMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("新建空白项目") },
+                        onClick = {
+                            plusMenu = false
+                            ctrl.newBlankProject()
+                            tab = 0
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导入作品包 / 海报包 …") },
+                        onClick = {
+                            plusMenu = false
+                            runCatching { pickImport.launch(arrayOf("*/*")) }
+                        },
+                    )
+                }
+            }
         }
 
         TabRow(selectedTabIndex = tab) {
@@ -484,7 +512,7 @@ private fun ProjectList(ctrl: AppController) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         if (ctrl.projectNames.isEmpty()) {
             Text(
-                "（还没有项目：点右上角 ＋ 新建，或到「海报包」里导入一个）",
+                "（还没有项目：点右上角 ＋ 新建，或用 ＋ →「导入作品包 / 海报包」选文件）",
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 12.dp),
             )
