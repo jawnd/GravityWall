@@ -6,6 +6,7 @@ HyperOS 4 锁屏的**多图层重力感应视差壁纸**：一个运行在 Syste
 
 - 📐 设计方案与开发日志：[GravityWall-docs](https://github.com/jawnd/GravityWall-docs)
 - 📱 目标平台：HyperOS 4 / Android 17（`compileSdk 37`），`minSdk 35`
+- ⬇️ 下载安装包：[Releases](https://github.com/jawnd/GravityWall/releases)
 - 🧩 模块 API：libxposed API 102（`io.github.libxposed:api`）
 
 > 仅面向 HyperOS 4 的锁屏。不同机型/系统版本的视图树可能不同，项目里对内部类与视图 id
