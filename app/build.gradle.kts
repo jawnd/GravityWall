@@ -45,6 +45,9 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+
     // 编译期依赖：模块 API（不打包进 APK）
     compileOnly("io.github.libxposed:api:102.0.0")
     // 运行期依赖：与框架/应用通信（远程偏好、XposedProvider）

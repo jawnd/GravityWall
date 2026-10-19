@@ -233,18 +233,35 @@ internal class Project(
         fun defaultBaseAmplitude(screenW: Int): Float = screenW * 0.03f
 
         /** 项目 → 预览用的摘要（结构与导入海报包得到的一致）。 */
-        fun toSummary(p: Project, screenW: Int = 0, screenH: Int = 0): ImportSummary = ImportSummary(
+        fun toSummary(
+            p: Project, screenW: Int = 0, screenH: Int = 0,
+            baseAmplitudePx: Float = defaultBaseAmplitude(if (screenW > 0) screenW else 1080),
+        ): ImportSummary = ImportSummary(
             behind = p.layers.count { it.band == "behind" },
             front = p.layers.count { it.band == "front" },
             top = p.layers.count { it.band == "top" },
             windows = 0,
-            layers = p.stageLayers(screenW, screenH),
+            layers = p.stageLayers(screenW, screenH, baseAmplitudePx),
             notes = emptyList(),
         )
 
         fun projectsDir(): File = File(PackStore.DIR, ROOT)
 
-        fun projectDir(name: String): File = File(projectsDir(), name)
+        fun isValidName(name: String): Boolean = name.isNotBlank() && name != "." && name != ".." &&
+            name.none { it == '/' || it == '\\' || it.isISOControl() }
+
+        fun uniqueName(base: String, root: File = projectsDir()): String {
+            require(isValidName(base))
+            var result = base
+            var n = 2
+            while (File(root, result).exists()) result = "$base(${n++})"
+            return result
+        }
+
+        fun projectDir(name: String): File {
+            require(isValidName(name)) { "Invalid project name" }
+            return File(projectsDir(), name)
+        }
 
         fun imagesDir(name: String): File = File(projectDir(name), "images")
 
@@ -295,7 +312,7 @@ internal class Project(
         fun load(name: String): Project? = runCatching {
             val f = File(projectDir(name), "project.json")
             if (!f.isFile) return null
-            fromJson(f.readText())
+            fromJson(f.readText())?.apply { this.name = name }
         }.getOrNull()
 
         fun list(): List<String> =
@@ -313,7 +330,7 @@ internal class Project(
             } ?: return null
 
             val baseName = File(packPath).nameWithoutExtension.take(24)
-            val projectName = baseName.ifEmpty { "导入作品" }
+            val projectName = uniqueName(baseName.ifEmpty { "导入作品" })
             val project = Project(projectName)
             imagesDir(projectName).mkdirs()
 
@@ -323,7 +340,7 @@ internal class Project(
                 ZipFile(packPath).use { z ->
                     val entries = z.entries().toList().filter { it.name.contains("/assets/") && !it.isDirectory }
                     for (e in entries) {
-                        val out = File(imagesDir(projectName), e.name.substringAfterLast('/'))
+                        val out = File(imagesDir(projectName), "${copied.size}_${e.name.substringAfterLast('/')}")
                         if (!out.isFile) {
                             runCatching { z.getInputStream(e).use { input -> out.outputStream().use { input.copyTo(it) } } }
                         }
@@ -397,7 +414,6 @@ internal class Project(
                             band = target.band,
                             z = ++zTop,
                             minX = c.minX, maxX = c.maxX, minY = c.minY, maxY = c.maxY,
-                            coefX = 0f, coefY = 0f,
                             maskShape = if (isRound) "round" else "rect",
                             maskRadius = if (isRound) 0f else c.cornerRadius,
                             maskTargetId = target.id,

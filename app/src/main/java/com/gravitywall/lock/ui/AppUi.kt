@@ -130,6 +130,7 @@ internal fun StagePreview(
         factory = { stage },
         modifier = modifier,
         update = {
+            it.setDesignSize(designW, designH)
             it.layers = layers
             if (!tiltEnabled) it.applyTilt(0f, 0f)
         },
@@ -520,7 +521,7 @@ private fun ProjectList(ctrl: AppController) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         if (ctrl.projectNames.isEmpty()) {
             Text(
-                "（还没有项目：点右上角 ＋ 新建，或用 ＋ →「导入作品包 / 海报包」选文件）",
+                "暂无项目，点 ＋ 新建或导入",
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 12.dp),
             )
@@ -639,14 +640,14 @@ private fun ProjectNameDialog(
 private fun PackList(ctrl: AppController) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         Text(
-            "专用目录：/sdcard/Download/gravitywall/packs/（导出的海报包 / 作品包都放这里）",
+            "/sdcard/Download/gravitywall/packs/",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 12.dp),
         )
         if (ctrl.packs.isEmpty()) {
             Text(
-                "（这里还没有包：用编辑器「保存 ▾」导出，或把 .tendies / .gwp 拷进这个目录）",
+                "暂无海报包或作品包",
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 6.dp),
             )
@@ -720,8 +721,7 @@ private fun SettingsTab(ctrl: AppController) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.fillMaxWidth(0.75f)) {
-                Text("Y 轴向上（CAML 几何）", fontWeight = FontWeight.Medium)
-                Text("海报包的默认语义；关掉会整体上下颠倒", fontSize = 11.sp)
+                Text("海报包 Y 轴向上", fontWeight = FontWeight.Medium)
             }
             Switch(checked = cfg.flipY, onCheckedChange = { ctrl.update(cfg.copy(flipY = it)) })
         }
@@ -733,7 +733,6 @@ private fun SettingsTab(ctrl: AppController) {
             onValueChange = { ctrl.update(cfg.copy(amplitudeCap = it)) },
             valueRange = 0.05f..1.0f,
         )
-        Text("社区包常给到 ±500pt（远超屏幕），大位移本来是配合裁剪窗口用的；上限太小会「动不起来」，太大可能让未裁剪的层飞出屏幕。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         // 参数模式（默认系数）
         val ctx = LocalContext.current
@@ -743,7 +742,7 @@ private fun SettingsTab(ctrl: AppController) {
             FilterChip(
                 selected = cfg.paramMode == "coefficient",
                 onClick = { ctrl.update(cfg.copy(paramMode = "coefficient")) },
-                label = { Text("影响系数（默认）") },
+                label = { Text("影响系数") },
             )
             FilterChip(
                 selected = cfg.paramMode == "pixel",
@@ -751,15 +750,6 @@ private fun SettingsTab(ctrl: AppController) {
                 label = { Text("绝对像素") },
             )
         }
-        Text(
-            if (cfg.paramMode == "coefficient") {
-                "用系数表达运动：远景 0.2~0.4 / 中景 0.5~0.7 / 主体 1.0 / 最前景 1.2~1.6，负值＝反向。导入海报包时会把像素位移换算成系数。"
-            } else {
-                "用绝对像素表达运动（min/max 区间），适合精确复刻某个包。"
-            },
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
         // 视差幅度基准：只在像素模式下暴露（系数模式固定 3%）
         if (cfg.paramMode == "pixel") {
@@ -772,11 +762,6 @@ private fun SettingsTab(ctrl: AppController) {
                 value = cfg.amplitude,
                 onValueChange = { ctrl.update(cfg.copy(amplitude = it)) },
                 valueRange = 0f..0.10f,
-            )
-            Text(
-                "这是「系数 1.0 的图层最大位移」的参照值；系数模式下固定为 3%、不显示。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
@@ -791,11 +776,6 @@ private fun SettingsTab(ctrl: AppController) {
             onValueChange = { ctrl.update(cfg.copy(fullScaleDeg = it)) },
             valueRange = 3f..25f,
         )
-        Text(
-            "倾斜多少度达到最大位移。10° 适合手持；放到 6° 以下会「一动就满」，20° 以上显得迟钝。",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
         Text(
             "平滑度：${(cfg.smooth * 100).toInt()}%（越大越跟手）",
@@ -806,11 +786,6 @@ private fun SettingsTab(ctrl: AppController) {
             value = cfg.smooth,
             onValueChange = { ctrl.update(cfg.copy(smooth = it)) },
             valueRange = 0.05f..1f,
-        )
-        Text(
-            "每帧向目标位置逼近的比例。25% 柔和跟手；调到 60% 以上会有些抖，10% 以下会很「飘」。",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         // 解锁后隐藏图层的延迟
@@ -824,12 +799,6 @@ private fun SettingsTab(ctrl: AppController) {
             onValueChange = { ctrl.update(cfg.copy(unlockHideDelayMs = it.toInt())) },
             valueRange = 100f..1500f,
         )
-        Text(
-            "解锁后过这么久，就把注入的图层藏起来（桌面与控制中心采样不到它们）。" +
-                "调太小：图层可能在解锁动画中途消失；调太大：解锁后马上拉控制中心可能会闪一下。",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
         Row(Modifier.padding(vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { ctrl.applyToLockScreen() }) { Text("应用设置") }
@@ -837,7 +806,7 @@ private fun SettingsTab(ctrl: AppController) {
 
         Text("还原", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 8.dp))
         Text(
-            "卸下所有注入图层、清空配置、时钟不再跟随倾斜；若之前备份过锁屏壁纸会一并还原（没备份的话需要你手动重设壁纸）。",
+            "移除作品并重置设置，锁屏壁纸恢复为与桌面一致。",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

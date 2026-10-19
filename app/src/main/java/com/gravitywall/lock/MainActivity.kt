@@ -29,6 +29,11 @@ class MainActivity : ComponentActivity(), XposedServiceHelper.OnServiceListener 
         controller.scan()
     }
 
+    override fun onStop() {
+        controller.flushSave()
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         controller.refreshStatus()

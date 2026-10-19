@@ -133,7 +133,7 @@ internal fun EditorTab(ctrl: AppController) {
     if (project == null) {
         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
             Text(
-                "还没有打开项目。到「作品」页新建一个，或把海报包导入为项目。",
+                "请在「项目」页新建或打开项目",
                 fontSize = 13.sp,
                 modifier = Modifier.padding(vertical = 12.dp),
             )
@@ -285,7 +285,7 @@ internal fun EditorTab(ctrl: AppController) {
 
         // ---- 图层清单 ----
         Text(
-            "图层清单（自上而下 = 压叠自上而下；按住 ☰ 拖动排序）",
+            "图层",
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
@@ -322,11 +322,11 @@ internal fun EditorTab(ctrl: AppController) {
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("导出海报包（iOS 兼容 .tendies）", fontSize = 13.sp) },
+                        text = { Text("导出海报包（.tendies）", fontSize = 13.sp) },
                         onClick = { saveMenu = false; ctrl.exportProject(apply = false) },
                     )
                     DropdownMenuItem(
-                        text = { Text("导出作品包（.gwp，本机搬运/备份）", fontSize = 13.sp) },
+                        text = { Text("导出作品包（.gwp）", fontSize = 13.sp) },
                         onClick = { saveMenu = false; ctrl.exportProjectArchive() },
                     )
                     DropdownMenuItem(
@@ -516,8 +516,8 @@ private fun LayerList(
                     .zIndex(if (rowId == dragId) 2f else 0f),
             ) {
                 when (rowId) {
-                    AppController.MARK_MINUTE -> ClockRow("分钟（系统时钟 · 不可编辑）")
-                    AppController.MARK_HOUR -> ClockRow("小时（系统时钟 · 不可编辑）")
+                    AppController.MARK_MINUTE -> ClockRow("分钟")
+                    AppController.MARK_HOUR -> ClockRow("小时")
                     else -> {
                         val layer = project.layers.firstOrNull { it.id == rowId }
                         if (layer != null) {
@@ -898,7 +898,7 @@ private fun CanvasScreen(
                 val sel = ctrl.selectedLayer
                 if (sel == null) {
                     Text(
-                        "先在图层清单里点一行选中图层，再回来调参数",
+                        "请先选择图层",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp),
@@ -915,7 +915,7 @@ private fun CanvasScreen(
                         if (previewMode) {
                             // 预览模式下参数只读：盖一层透明遮罩吃掉所有触摸
                             Text(
-                                "预览模式：参数不可编辑（点顶栏「预览中」退出）",
+                                "预览中，参数只读",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(16.dp),
@@ -955,11 +955,6 @@ private fun LayerParams(
             .padding(horizontal = 16.dp),
     ) {
     Text("图层属性", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-    Text(
-        "所在带由清单里的位置决定：把这一行拖过时钟行就换带",
-        fontSize = 11.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 
     OutlinedTextField(
         value = layer.name,
@@ -980,11 +975,6 @@ private fun LayerParams(
                 )
             }
         }
-        Text(
-            "方形/圆形都能自由改宽高——拉长就是矩形/椭圆；「图片」用遮罩图本身的明暗当形状。",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         if (layer.maskShape == "image") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
                 FilterChip(
@@ -1018,13 +1008,6 @@ private fun LayerParams(
                 }
             }
         }
-        Text(
-            "把父级的「启用」关掉，这一层就只显示遮罩以内的部分（显示窗）；" +
-                "遮罩跟着自己这一层的位移动，和内容反向运动就是「透过窗口看场景」。",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
     } else {
         val mine = ctrl.project?.layers?.filter { it.maskShape != null && it.maskTargetId == layer.id }
             ?: emptyList()
@@ -1128,7 +1111,7 @@ private fun LayerParams(
 
     // ---- 运动：两套参数互斥显隐 ----
     Text(
-        if (cfg.paramMode == "coefficient") "运动 · 视差强度（系数模式）" else "运动 · 位移区间（绝对像素模式）",
+        if (cfg.paramMode == "coefficient") "视差强度" else "位移区间（px）",
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
         modifier = Modifier.padding(top = 12.dp),
@@ -1174,35 +1157,23 @@ private fun LayerParams(
             },
             valueRange = -rangeY..rangeY,
         )
-        Text(
-            "远景 0.2~0.4 / 中景 0.5~0.7 / 主体 1.0 / 最前景 1.2~1.6；数值可以直接输入" +
-                "（iOS 的包常见十几到几十），滑块的量程会跟着当前值自动放大。",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     } else {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
-            NumField("minX", layer.minX, Modifier.weight(1f)) { v ->
-                ctrl.beginEdit(); ctrl.updateSelected { it.minX = v }
+            NumField("minX", layer.resolvedMotion(base)[0], Modifier.weight(1f)) { v ->
+                ctrl.beginEdit(); ctrl.updateSelected { val m = it.resolvedMotion(base); it.coefX = null; it.minX = v; it.maxX = m[1] }
             }
-            NumField("maxX", layer.maxX, Modifier.weight(1f)) { v ->
-                ctrl.beginEdit(); ctrl.updateSelected { it.maxX = v }
+            NumField("maxX", layer.resolvedMotion(base)[1], Modifier.weight(1f)) { v ->
+                ctrl.beginEdit(); ctrl.updateSelected { val m = it.resolvedMotion(base); it.coefX = null; it.minX = m[0]; it.maxX = v }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-            NumField("minY", layer.minY, Modifier.weight(1f)) { v ->
-                ctrl.beginEdit(); ctrl.updateSelected { it.minY = v }
+            NumField("minY", layer.resolvedMotion(base)[2], Modifier.weight(1f)) { v ->
+                ctrl.beginEdit(); ctrl.updateSelected { val m = it.resolvedMotion(base); it.coefY = null; it.minY = v; it.maxY = m[3] }
             }
-            NumField("maxY", layer.maxY, Modifier.weight(1f)) { v ->
-                ctrl.beginEdit(); ctrl.updateSelected { it.maxY = v }
+            NumField("maxY", layer.resolvedMotion(base)[3], Modifier.weight(1f)) { v ->
+                ctrl.beginEdit(); ctrl.updateSelected { val m = it.resolvedMotion(base); it.coefY = null; it.minY = m[2]; it.maxY = v }
             }
         }
-        Text(
-            "两个极端姿态下的位移（px）；max 小于 min 即为反向。视差幅度基准在「设置」里。",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
     }
 
     Text("不透明度 ${layer.alpha * 100 / 255}%", fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
@@ -1225,7 +1196,7 @@ private fun LayerParams(
     val hasMask = ctrl.project?.layers?.any { it.maskShape != null && it.visible && it.maskTargetId == layer.id } == true
     if (layer.maskShape == null && hasMask) {
         Text(
-            "这一层挂着遮罩：「启用」打开＝整层完整显示；关掉＝只显示遮罩以内的部分。",
+            "关闭后仅在遮罩内显示",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1265,12 +1236,7 @@ private fun GlobalsSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
         ) {
-            Text("全局参数（本项目）", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "参数模式、视差幅度基准、灵敏度、平滑在「设置」页；这里只放这件作品自己的设定。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text("项目设置", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
 
             OutlinedTextField(
                 value = name,
@@ -1288,15 +1254,10 @@ private fun GlobalsSheet(
             }
 
             Text(
-                "底图（系统锁屏壁纸 · 液态玻璃的取样源）",
+                "锁屏壁纸源图层",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 12.dp),
-            )
-            Text(
-                "选中哪一层，应用到锁屏时就把哪一层写进系统壁纸——液态玻璃采样的正是这张纹理。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Column(modifier = Modifier.padding(top = 4.dp)) {
                 val imageLayers = project.layers.filter { it.image != null }
@@ -1314,11 +1275,12 @@ private fun GlobalsSheet(
             }
             OutlinedButton(
                 onClick = { ctrl.setLockWallpaper(project.baseLayerId) },
-                enabled = project.layers.any { it.image != null },
+                enabled = project.layers.any { it.id == project.baseLayerId && it.image != null },
                 modifier = Modifier.padding(top = 6.dp),
             ) { Text("设为锁屏壁纸", fontSize = 12.sp) }
+            Text("同时影响控制中心背景", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            Text("新图层默认落在", fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp))
+            Text("新图层默认层级", fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
                 listOf("behind" to "时钟后", "front" to "时钟前", "top" to "最顶层").forEach { (v, label) ->
                     FilterChip(
@@ -1328,11 +1290,6 @@ private fun GlobalsSheet(
                     )
                 }
             }
-            Text(
-                "时钟后＝在小时数字后面；时钟前＝小时与分钟之间（主体常用）；最顶层＝压住分钟数字。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Box(Modifier.height(24.dp))
         }
     }

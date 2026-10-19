@@ -28,7 +28,7 @@ internal class AppController(private val context: Context) {
         private set
     var summary by mutableStateOf<ImportSummary?>(null)
         private set
-    var config by mutableStateOf(RuntimeConfig())
+    var config by mutableStateOf(PackStore.readConfigFile() ?: RuntimeConfig())
         private set
     var report by mutableStateOf("")
         private set
@@ -72,7 +72,10 @@ internal class AppController(private val context: Context) {
     fun beginEdit() {
         val p = project ?: return
         val now = System.currentTimeMillis()
-        if (now - lastSnapshotAt < 800) return
+        // 新编辑即使被合并进上一条快照，也必须使重做失效。
+        redoStack.clear()
+        canRedo = false
+        if (now - lastSnapshotAt < 800 && undoStack.isNotEmpty()) return
         lastSnapshotAt = now
         undoStack.addLast(p.toJson())
         while (undoStack.size > 40) undoStack.removeFirst()
@@ -81,12 +84,24 @@ internal class AppController(private val context: Context) {
         canRedo = false
     }
 
+    private fun clearHistory() {
+        undoStack.clear()
+        redoStack.clear()
+        lastSnapshotAt = 0L
+        canUndo = false
+        canRedo = false
+    }
+
     private fun restore(json: String) {
         val p = Project.fromJson(json) ?: return
+        pendingSave?.let { mainHandler.removeCallbacks(it) }
+        pendingSave = null
+        lastSnapshotAt = 0L
         project = p
+        revision++
         if (p.layers.none { it.id == selectedLayerId }) selectedLayerId = p.layers.firstOrNull()?.id
         Project.save(p)
-        summary = Project.toSummary(p, screenW(), screenH())
+        summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
     }
 
     fun undo() {
@@ -124,7 +139,7 @@ internal class AppController(private val context: Context) {
         other.z = tmp
         p.layers.sortedBy { it.z }.forEachIndexed { i, item -> item.z = i }
         Project.save(p)
-        summary = Project.toSummary(p, screenW(), screenH())
+        summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
         status = "已${if (up) "上移" else "下移"}「${l.name}」"
     }
 
@@ -169,26 +184,30 @@ internal class AppController(private val context: Context) {
     private fun screenH() = com.gravitywall.lock.ui.realScreen(context).second
 
     fun newBlankProject() {
-        val name = "项目${Project.list().size + 1}"
+        flushSave()
+        val name = Project.uniqueName("项目${Project.list().size + 1}")
+        clearHistory()
         Project.clearBitmapCache()
         project = Project.blank(name, screenW(), screenH())
         Project.save(project!!)
         projectNames = Project.list()
         selectedLayerId = project?.layers?.firstOrNull()?.id
-        summary = project?.let { Project.toSummary(it, screenW(), screenH()) }
+        summary = project?.let { Project.toSummary(it, screenW(), screenH(), screenW() * config.amplitude) }
         status = "已新建项目：$name"
     }
 
     fun openProject(name: String) {
+        flushSave()
         val p = Project.load(name)
         if (p == null) {
             status = "打开失败：$name"
             return
         }
+        clearHistory()
         Project.clearBitmapCache()
         project = p
         selectedLayerId = p.layers.firstOrNull()?.id
-        summary = Project.toSummary(p, screenW(), screenH())
+        summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
         status = "已打开项目：$name（${p.layers.size} 层）"
     }
 
@@ -199,11 +218,19 @@ internal class AppController(private val context: Context) {
         Thread {
             val p = runCatching { Project.fromPack(pack.path, screenW(), screenH(), config) }.getOrNull()
             post {
+                if (p == null) {
+                    status = "导入失败（可能不是 CA 类海报）"
+                    return@post
+                }
+                flushSave()
+                clearHistory()
+                Project.clearBitmapCache()
+                Project.save(p)
                 project = p
-                selectedLayerId = p?.layers?.firstOrNull()?.id
+                selectedLayerId = p.layers.firstOrNull()?.id
                 projectNames = Project.list()
-                summary = p?.let { Project.toSummary(it, screenW(), screenH()) }
-                status = if (p == null) "导入失败（可能不是 CA 类海报）" else "已导入为项目：${p.name}（${p.layers.size} 层）"
+                summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
+                status = "已导入为项目：${p.name}（${p.layers.size} 层）"
             }
         }.start()
     }
@@ -223,7 +250,7 @@ internal class AppController(private val context: Context) {
         revision++
         project?.let {
             Project.save(it)
-            summary = Project.toSummary(it, screenW(), screenH())
+            summary = Project.toSummary(it, screenW(), screenH(), screenW() * config.amplitude)
         }
         status = if (l.visible) "已显示「${l.name}」" else "已隐藏「${l.name}」"
     }
@@ -231,10 +258,12 @@ internal class AppController(private val context: Context) {
     /** 软边界：图层不能被完全拖出画布（至少留 15% 可见）。 */
     fun clampSelected() {
         val l = selectedLayer ?: return
-        val marginX = l.w * 0.15f
-        val marginY = l.h * 0.15f
+        val marginX = minOf(l.w * 0.15f, screenW() * 0.5f)
+        val marginY = minOf(l.h * 0.15f, screenH() * 0.5f)
         l.x = l.x.coerceIn(-l.w + marginX, screenW() - marginX)
         l.y = l.y.coerceIn(-l.h + marginY, screenH() - marginY)
+        updateSelected { }
+        flushSave()
     }
 
     fun updateSelected(block: (ProjectLayer) -> Unit) {
@@ -248,6 +277,9 @@ internal class AppController(private val context: Context) {
             sl.rotation = l.rotation
             sl.fillColor = if (l.image == null) l.color else null
             sl.fill = l.fill
+            val motion = l.resolvedMotion(screenW() * config.amplitude)
+            sl.minX = motion[0]; sl.maxX = motion[1]
+            sl.minY = motion[2]; sl.maxY = motion[3]
         }
         project?.let { saveDeferred(it) }
     }
@@ -264,7 +296,7 @@ internal class AppController(private val context: Context) {
         p.layers.add(layer)
         selectedLayerId = layer.id
         Project.save(p)
-        summary = Project.toSummary(p, screenW(), screenH())
+        summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
         status = "已添加纯色层"
     }
 
@@ -275,7 +307,7 @@ internal class AppController(private val context: Context) {
         p.layers.remove(l)
         selectedLayerId = p.layers.firstOrNull()?.id
         Project.save(p)
-        summary = Project.toSummary(p, screenW(), screenH())
+        summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
         status = "已删除「${l.name}」"
     }
 
@@ -302,6 +334,12 @@ internal class AppController(private val context: Context) {
                 o.outWidth to o.outHeight
             }.getOrDefault(1 to 1)
             post {
+                if (project !== p) return@post
+                if (bounds.first <= 0 || bounds.second <= 0) {
+                    status = "图片导入失败：无法识别图片"
+                    return@post
+                }
+                beginEdit()
                 val scale = minOf(screenW().toFloat() / bounds.first, screenH().toFloat() / bounds.second, 1f)
                 val w = bounds.first * scale
                 val h = bounds.second * scale
@@ -314,7 +352,7 @@ internal class AppController(private val context: Context) {
                 p.layers.add(layer)
                 selectedLayerId = layer.id
                 Project.save(p)
-                summary = Project.toSummary(p, screenW(), screenH())
+                summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
                 status = "已添加图片层（${bounds.first}×${bounds.second}）"
             }
         }.start()
@@ -347,7 +385,7 @@ internal class AppController(private val context: Context) {
     private fun commit(p: Project) {
         revision++
         Project.save(p)
-        summary = Project.toSummary(p, screenW(), screenH())
+        summary = Project.toSummary(p, screenW(), screenH(), screenW() * config.amplitude)
     }
 
     /** 手动保存（编辑器里每次改动其实都已落盘，这里给一个明确的反馈）。 */
@@ -526,6 +564,7 @@ internal class AppController(private val context: Context) {
                     status = "遮罩图导入失败"
                     return@post
                 }
+                if (project !== p) return@post
                 beginEdit()
                 val layer = ProjectLayer(
                     name = "遮罩${p.layers.count { it.maskShape != null } + 1}",
@@ -584,6 +623,7 @@ internal class AppController(private val context: Context) {
 
     fun setDefaultBand(band: String) {
         val p = project ?: return
+        beginEdit()
         p.defaultBand = band
         revision++
         Project.save(p)
@@ -593,11 +633,12 @@ internal class AppController(private val context: Context) {
     /** 指定底图（系统壁纸 / 液态玻璃取样源）；传 null 表示不指定。 */
     fun setBaseLayer(id: String?) {
         val p = project ?: return
+        beginEdit()
         p.baseLayerId = id
         revision++
         Project.save(p)
         val name = p.layers.firstOrNull { it.id == id }?.name
-        status = if (name == null) "已取消指定底图" else "底图已设为「$name」（应用时会同时设为锁屏壁纸）"
+        status = if (name == null) "已取消指定底图" else "底图已设为「$name」"
     }
 
     /** 替换某层的图片（位置 / 尺寸保留，方便换上同构图的另一版）。 */
@@ -619,6 +660,7 @@ internal class AppController(private val context: Context) {
                     status = "替换失败"
                     return@post
                 }
+                if (project !== p) return@post
                 beginEdit()
                 l.image = rel
                 l.color = null
@@ -637,7 +679,12 @@ internal class AppController(private val context: Context) {
     /** 按名字改名项目（列表里长按重命名用，不要求它当前打开着）。 */
     fun renameProjectByName(oldName: String, newName: String) {
         val clean = newName.trim()
-        if (clean.isEmpty() || clean == oldName) return
+        if (!Project.isValidName(clean)) {
+            status = "项目名不能包含路径分隔符或使用 .、.."
+            return
+        }
+        if (clean == oldName) return
+        flushSave()
         if (Project.list().contains(clean)) {
             status = "已有同名项目：$clean"
             return
@@ -648,15 +695,16 @@ internal class AppController(private val context: Context) {
             status = "改名失败（项目目录被占用）"
             return
         }
-        if (project?.name == oldName) {
-            project?.name = clean
-            project?.let { Project.save(it) }
-        }
+        // 即使改名的项目未打开，也要同步 JSON 内部的名称。
+        val renamed = if (project?.name == oldName) project?.apply { name = clean }
+            else Project.load(clean)
+        renamed?.let { it.name = clean; Project.save(it) }
+        if (project === renamed) clearHistory()
         // 正被应用到锁屏的话，配置里的路径要同步，否则模块加载不到
-        val applied = config.project?.contains("/$oldName/") == true
+        val applied = config.project == java.io.File(oldDir, "project.json").absolutePath
         if (applied) {
-            config = config.copy(project = config.project!!.replace("/$oldName/", "/$clean/"))
-            applyProject()
+            config = config.copy(project = java.io.File(newDir, "project.json").absolutePath)
+            persistConfig()
         }
         revision++
         Project.clearBitmapCache()
@@ -666,23 +714,25 @@ internal class AppController(private val context: Context) {
 
     /** 删除项目（连目录一起）。它是当前打开的、或正被应用的话，一并清干净。 */
     fun deleteProject(name: String) {
+        flushSave()
         val wasOpen = project?.name == name
-        val wasApplied = config.project?.contains("/$name/") == true
         val dir = Project.projectDir(name)
+        val wasApplied = config.project == java.io.File(dir, "project.json").absolutePath
         runCatching { dir.deleteRecursively() }.getOrDefault(false)
         if (dir.exists()) {
             status = "删除失败：$name（目录被占用？）"
             return
         }
         if (wasOpen) {
+            clearHistory()
             Project.clearBitmapCache()
             project = null
             selectedLayerId = null
             summary = null
         }
         if (wasApplied) {
-            config = config.copy(project = null)
-            applyProject()
+            config = config.copy(project = null, pack = null)
+            persistConfig()
         }
         projectNames = Project.list()
         status = "已删除项目「$name」" + if (wasApplied) "（锁屏上的作品也已撤下）" else ""
@@ -729,11 +779,15 @@ internal class AppController(private val context: Context) {
         status = "正在导入 …"
         Thread {
             val display = queryDisplayName(uri) ?: "import_${System.currentTimeMillis()}"
-            val safeName = display.replace(Regex("[^\\w\\u4e00-\\u9fa5.()\\- ]"), "_").take(60)
             val dir = java.io.File(context.cacheDir, "import").apply { mkdirs() }
             // 上一次导入的临时文件（导入器是异步读的，这里只清旧的）
-            dir.listFiles()?.filter { it.lastModified() < System.currentTimeMillis() - 3_600_000L }?.forEach { it.delete() }
-            val tmp = java.io.File(dir, safeName)
+            dir.listFiles()?.filter { it.lastModified() < System.currentTimeMillis() - 3_600_000L }?.forEach { it.deleteRecursively() }
+            val suffix = if (display.endsWith(".tendies", ignoreCase = true)) ".tendies" else ".gwp"
+            val stem = display.substringBeforeLast('.').map { c ->
+                if (c == '/' || c == '\\' || c.isISOControl()) '_' else c
+            }.joinToString("").take(60).ifBlank { "导入作品" }
+            val taskDir = java.io.File(dir, java.util.UUID.randomUUID().toString()).apply { mkdirs() }
+            val tmp = java.io.File(taskDir, "$stem$suffix")
             val ok = runCatching {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     tmp.outputStream().use { input.copyTo(it) }
@@ -771,9 +825,8 @@ internal class AppController(private val context: Context) {
                     val json = zip.getInputStream(entry).bufferedReader().readText()
                     val p = Project.fromJson(json) ?: return@use null
                     val baseName = p.name.ifEmpty { file.nameWithoutExtension }
-                    var target = baseName
-                    var n = 2
-                    while (Project.list().contains(target)) target = "$baseName(${n++})"
+                    require(Project.isValidName(baseName)) { "Invalid project name" }
+                    val target = Project.uniqueName(baseName)
                     Project.imagesDir(target).mkdirs()
                     zip.entries().toList()
                         .filter { it.name.startsWith("images/") && !it.isDirectory }
@@ -800,7 +853,12 @@ internal class AppController(private val context: Context) {
 
     fun saveAs(newName: String) {
         val p = project ?: return
-        val clean = newName.trim().ifEmpty { return }
+        val clean = newName.trim()
+        if (!Project.isValidName(clean)) {
+            status = "项目名不能包含路径分隔符或使用 .、.."
+            return
+        }
+        flushSave()
         if (clean == p.name) {
             status = "名称没有变化"
             return
@@ -824,10 +882,11 @@ internal class AppController(private val context: Context) {
         }
         copy.name = clean
         Project.save(copy)
+        clearHistory()
         project = copy
         selectedLayerId = copy.layers.firstOrNull()?.id
         projectNames = Project.list()
-        summary = Project.toSummary(copy, screenW(), screenH())
+        summary = Project.toSummary(copy, screenW(), screenH(), screenW() * config.amplitude)
         status = "已另存为「$clean」"
     }
 
@@ -868,12 +927,13 @@ internal class AppController(private val context: Context) {
 
     /**
      * 应用到锁屏：直接把模块指向项目文件（不经海报包中转），并广播重建；
-     * 若项目指定了底图，同时把底图设为系统锁屏壁纸（液态玻璃会采样它）。
+     * 系统锁屏壁纸仅由用户手动设置。
      */
     fun applyProject() {
         val p = project ?: return
         flushSave()
         val cfg = config.copy(
+            pack = null,
             project = java.io.File(Project.projectDir(p.name), "project.json").absolutePath,
         )
         config = cfg
@@ -935,12 +995,16 @@ internal class AppController(private val context: Context) {
 
     fun update(cfg: RuntimeConfig) {
         config = cfg
+        project?.let { summary = Project.toSummary(it, screenW(), screenH(), screenW() * cfg.amplitude) }
     }
 
     /** 应用到锁屏：写远程偏好 + 写 config.json（后备）+ 广播让模块立即重建。 */
     fun applyToLockScreen() {
-        val cfg = config.copy(pack = selected?.path ?: config.pack)
-        config = cfg
+        persistConfig()
+    }
+
+    private fun persistConfig() {
+        val cfg = config
         val json = cfg.toJson()
         val written = runCatching {
             prefs()?.edit()?.putString(State.KEY_RUNTIME_CONFIG, json)?.commit() ?: false
@@ -962,7 +1026,10 @@ internal class AppController(private val context: Context) {
         runCatching { prefs()?.edit()?.putString(State.KEY_RUNTIME_CONFIG, "{}")?.commit() }
         PackStore.writeConfigFile(RuntimeConfig())
         runCatching { context.sendBroadcast(Intent(State.ACTION_RESTORE)) }
+        flushSave()
+        clearHistory()
         project = null
+        selectedLayerId = null
         selected = null
         summary = null
         config = RuntimeConfig()
